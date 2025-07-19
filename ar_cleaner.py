@@ -1,4 +1,6 @@
 import pandas as pd
+import re
+import numpy as np
 
 def generate_voucher_numbers(df, date_col="Sales Invoice Date"):
     df = df.copy()
@@ -125,3 +127,198 @@ def transform_account_receivable(df):
     df_transformed = add_customer_subtotals(df_transformed)
 
     return df_transformed
+
+def generate_voucher_numbers_op(df):
+    """Generate OP voucher numbers: OP-YY-MM-XXX"""
+    df = df.copy()
+    df["Other Payable Voucher No"] = None
+    counters = {}
+
+    for idx, row in df.iterrows():
+        if isinstance(row["Date"], pd.Timestamp):
+            date = row["Date"]
+        else:
+            date = pd.to_datetime(row["Date"], errors="coerce")
+
+        if pd.isna(date):
+            continue
+
+        key = (date.year, date.month)
+        if key not in counters:
+            counters[key] = 1
+        else:
+            counters[key] += 1
+
+        df.at[idx, "Other Payable Voucher No"] = f"OP-{str(date.year)[-2:]}-{date.month:02d}-{counters[key]:03d}"
+
+    return df
+
+
+def add_vendor_subtotals_op(df):
+    """Add subtotals per Vendor"""
+    df = df.copy()
+    result = []
+
+    for vendor, group in df.groupby("Company Name", dropna=False):
+        result.append(group)
+        subtotal_row = pd.Series("", index=df.columns)
+        subtotal_row["Company Name"] = f"{vendor} Subtotal"
+        for col in ["Original Amount", "Amount", "Payment Amount", "Ending Balance"]:
+            if col in df.columns:
+                subtotal_row[col] = group[col].sum()
+        result.append(pd.DataFrame([subtotal_row], columns=df.columns))
+
+    return pd.concat(result, ignore_index=True)
+
+def transform_other_payable(df):
+    df = df.copy()
+
+    # --- Ensure correct columns ---
+    df = df[["Date", "Vendor/Client", "Trans No", "Description", "Currency", "Rate", "Debit", "Credit"]]
+
+    # --- Normalize column names ---
+    df.rename(columns={
+        "Vendor/Client": "Vendor",
+        "Trans No": "Trans_No"
+    }, inplace=True)
+
+    # --- Separate OP & Payments ---
+    df["is_payment"] = df["Trans_No"].str.contains(r"(paid|top\s*up|topup)", case=False, na=False)
+
+    op_df = df[~df["is_payment"]].copy()
+    pay_df = df[df["is_payment"]].copy()
+
+    # Clean Trans_No for OP matching (remove "_paid" or "paid")
+    def clean_trans_no(t):
+        return re.sub(r"(_?paid)", "", str(t), flags=re.IGNORECASE)
+
+    op_df["Clean_Trans_No"] = op_df["Trans_No"].apply(clean_trans_no)
+    pay_df["Clean_Trans_No"] = pay_df["Trans_No"].apply(clean_trans_no)
+
+    # --- Handle multiple invoice payments ---
+    # Split comma-separated invoices in payment rows
+    expanded_payments = []
+    for _, row in pay_df.iterrows():
+        trans_list = [t.strip() for t in str(row["Clean_Trans_No"]).split(",")]
+        for trans in trans_list:
+            expanded_payments.append({
+                "Clean_Trans_No": trans,
+                "Payment Date": row["Date"],
+                "Payment Voucher No": row["Trans_No"],
+                "Payment Amount": row["Credit"] if not pd.isna(row["Credit"]) else 0
+            })
+    pay_expanded_df = pd.DataFrame(expanded_payments)
+
+    # --- Merge OP with Payments ---
+    merged = op_df.merge(
+        pay_expanded_df,
+        how="left",
+        on="Clean_Trans_No"
+    )
+
+    # --- Fill Columns ---
+    merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.date
+    merged["Currency"] = "IDR"  # default
+    merged["Rate"] = 1  # default
+
+    # OP Amount = Debit (since Debit = increase OP)
+    merged["Amount"] = merged["Debit"].fillna(0).round()
+
+    # If payment exists, Payment Amount = OP Amount (fully paid assumption)
+    merged["Payment Amount"] = np.where(
+        merged["Payment Voucher No"].notna(),
+        merged["Amount"],  # full payment allocation
+        0
+    )
+
+    # Ending Balance = Payment Amount - Amount
+    merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
+
+    # Generate Voucher No for OP (OP-YY-MM-###)
+    merged["Voucher No"] = merged.groupby(
+        [merged["Date"].apply(lambda x: f"{x:%y-%m}" if pd.notna(x) else "00-00")]
+    ).cumcount() + 1
+    merged["Voucher No"] = "OP-" + merged["Date"].apply(lambda x: f"{x:%y-%m}" if pd.notna(x) else "00-00") + "-" + \
+                           merged["Voucher No"].astype(str).str.zfill(3)
+
+    # --- Build final dataframe ---
+    df_transformed = merged[[
+        "Date", "Vendor", "Trans_No", "Voucher No", "Description",
+        "Currency", "Debit", "Rate", "Amount",
+        "Payment Date", "Payment Voucher No", "Payment Amount", "Ending Balance"
+    ]]
+
+    # --- Add Subtotals per Vendor or Reimbursement ---
+    # --- Filter only reimbursement transactions (excluding Mailjet) ---
+    reimb_group = df_transformed[
+        df_transformed["Description"].str.contains("reimbursement", case=False, na=False)
+        & ~df_transformed["Description"].str.contains("mailjet", case=False, na=False)
+    ]
+
+    # --- Filter the rest of the transactions ---
+    normal_group = df_transformed.drop(reimb_group.index)
+
+    # --- 1. Separate reimbursement and normal transactions ---
+    reimb_group = df_transformed[
+        df_transformed["Description"].str.contains("reimbursement", case=False, na=False)
+        & ~df_transformed["Description"].str.contains("mailjet", case=False, na=False)
+    ]
+
+    normal_group = df_transformed.drop(reimb_group.index)
+
+    # --- 2. Group normal transactions by vendor (with subtotals as before) ---
+    grouped_normal = []
+    for vendor, group in normal_group.groupby("Vendor", dropna=False):
+        grouped_normal.append(group)
+        subtotal_row = pd.Series({
+            "Date": "Subtotal " + str(vendor),
+            "Vendor": "",
+            "Trans_No": "",
+            "Voucher No": "",
+            "Description": "",
+            "Currency": "",
+            "Debit": group["Debit"].sum(),
+            "Rate": "",
+            "Amount": group["Amount"].sum(),
+            "Payment Date": "",
+            "Payment Voucher No": "",
+            "Payment Amount": group["Payment Amount"].sum(),
+            "Ending Balance": group["Ending Balance"].sum()
+        })
+        grouped_normal.append(pd.DataFrame([subtotal_row]))
+
+    df_normal_final = pd.concat(grouped_normal, ignore_index=True)
+
+    # --- 3. Combine reimbursement transactions into one group with one subtotal ---
+    if not reimb_group.empty:
+        subtotal_reimb = pd.Series({
+            "Date": "Subtotal Reimbursement",
+            "Vendor": "",
+            "Trans_No": "",
+            "Voucher No": "",
+            "Description": "",
+            "Currency": "",
+            "Debit": reimb_group["Debit"].sum(),
+            "Rate": "",
+            "Amount": reimb_group["Amount"].sum(),
+            "Payment Date": "",
+            "Payment Voucher No": "",
+            "Payment Amount": reimb_group["Payment Amount"].sum(),
+            "Ending Balance": reimb_group["Ending Balance"].sum()
+        })
+        df_final = pd.concat([df_normal_final, reimb_group, pd.DataFrame([subtotal_reimb])], ignore_index=True)
+    else:
+        df_final = df_normal_final
+
+    # Replace NaN with empty string for safe Excel export
+    # Replace NaN with empty string for safe Excel export
+    df_final = df_final.replace({np.nan: ""})
+
+    # ✅ Rename columns as requested
+    df_final.rename(columns={
+        "Vendor": "Company Name",
+        "Trans_No": "Inv No",
+        "Debit": "Original Amount"
+    }, inplace=True)
+
+    return df_final
