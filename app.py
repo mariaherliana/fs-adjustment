@@ -1,59 +1,68 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from ar_cleaner import transform_account_receivable
+import numpy as np
+from ar_cleaner import transform_account_receivable, transform_other_payable
 
 def to_excel(df, engine="xlsxwriter"):
     output = BytesIO()
     with pd.ExcelWriter(output, engine=engine) as writer:
-        df.to_excel(writer, index=False, sheet_name="AR_Keystone", startrow=1)
+        df.to_excel(writer, index=False, sheet_name="Report", startrow=1)
 
         if engine == "xlsxwriter":
             workbook = writer.book
-            worksheet = writer.sheets["AR_Keystone"]
+            worksheet = writer.sheets["Report"]
 
-            # --- Merge Header for Payment ---
-            payment_format = workbook.add_format({
+            # === Payment Header Merged ===
+            if "Payment Date" in df.columns and "Payment Amount" in df.columns:
+                payment_format = workbook.add_format({
+                    "bold": True,
+                    "align": "center",
+                    "valign": "vcenter",
+                    "border": 1,
+                    "bg_color": "#D9EAD3"  # Light green
+                })
+                payment_start_col = df.columns.get_loc("Payment Date")
+                payment_end_col = df.columns.get_loc("Payment Amount")
+                worksheet.merge_range(
+                    0, payment_start_col, 0, payment_end_col,
+                    "Payment", payment_format
+                )
+
+            # === Normal Header ===
+            header_format = workbook.add_format({
                 "bold": True,
                 "align": "center",
                 "valign": "vcenter",
-                "border": 1,
-                "bg_color": "#D9EAD3"  # Light green, optional
-            })
-
-            # Find the exact columns for Payment section
-            payment_start_col = df.columns.get_loc("Sales Receipt Date")
-            payment_end_col = df.columns.get_loc("Sales Receipt Amount")
-
-            # Merge the header row above the payment columns
-            worksheet.merge_range(
-                0, payment_start_col, 0, payment_end_col,
-                "Payment",
-                payment_format
-            )
-
-            # --- Header formatting ---
-            header_format = workbook.add_format({
-                "bold": True, "align": "center", "valign": "vcenter", "border": 1
+                "border": 1
             })
             for col_num, value in enumerate(df.columns):
                 worksheet.write(1, col_num, value, header_format)
 
-            # --- Auto-adjust column widths ---
-            for i, col in enumerate(df.columns):
-                max_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
-                worksheet.set_column(i, i, max_width)
-
-            # --- Subtotal row formatting ---
+            # === Subtotal Row Formatting (Black bg + White font) ===
             subtotal_format = workbook.add_format({
                 "bold": True,
                 "font_color": "white",
-                "bg_color": "black"
+                "bg_color": "black",
+                "border": 1,
+                "num_format": "#,##0.00"
             })
 
-            for row_num, value in enumerate(df["Customer"], start=2):  # +2 because data starts at row 2
-                if isinstance(value, str) and "Subtotal" in value:
-                    worksheet.set_row(row_num, None, subtotal_format)
+            # Write rows (apply subtotal format if row contains "Subtotal")
+            for row_num, row_data in enumerate(df.itertuples(index=False), start=2):
+                is_subtotal = (
+                    isinstance(row_data[0], str) and "Subtotal" in row_data[0]
+                )
+                for col_num, cell_value in enumerate(row_data):
+                    if pd.isna(cell_value):
+                        cell_value = ""
+                    if is_subtotal:
+                        worksheet.write(row_num, col_num, cell_value, subtotal_format)
+
+            # Auto-adjust column widths
+            for i, col in enumerate(df.columns):
+                max_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                worksheet.set_column(i, i, max_width)
 
     return output.getvalue()
 
@@ -95,6 +104,30 @@ def main():
                 )
         else:
             st.info("Please upload AR.xlsx to proceed.")
+    elif step == "Other Payable":
+        st.subheader("📥 Upload Other Payable File")
+        uploaded_file = st.file_uploader("Upload OP.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to OP Format"):
+                transformed_df = transform_other_payable(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download OP Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="OP_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload OP.xlsx to proceed.")
     else:
         st.warning(f"⚠️ The '{step}' process is not implemented yet.")
 
