@@ -70,6 +70,15 @@ def to_excel(df, engine="xlsxwriter"):
 def main():
     st.set_page_config(page_title="Accuria", layout="wide")
     st.title("🧹 Accuria Data Cleanup")
+    st.markdown("""
+    Welcome to **Accuria Data Cleanup**!  
+    This tool helps you clean and transform accounting data from Accurate Accounting, including:
+    - **Advance Sales Adjustments**
+    - **Account Receivable & Payable Reports**
+    - **Other Payable Cleanups**
+
+    👉 **Upload your file on the left panel to get started.**
+    """)
 
     step = st.sidebar.radio("Select Process Type", [
         "Advance Payment",
