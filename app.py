@@ -68,8 +68,8 @@ def to_excel(df, engine="xlsxwriter"):
     return output.getvalue()
 
 def main():
-    st.set_page_config(page_title="Data Cleanup Wizard", layout="wide")
-    st.title("🧹 Internal Data Cleanup Wizard")
+    st.set_page_config(page_title="Accuria", layout="wide")
+    st.title("🧹 Accuria Data Cleanup")
 
     step = st.sidebar.radio("Select Process Type", [
         "Advance Payment",
@@ -78,7 +78,8 @@ def main():
         "Temporary Receipt",
         "Advance Sales",
         "Account Receivable",
-        "Other Receivable"
+        "Other Receivable",
+        "Prepaid PPh 23",
     ])
 
     if step == "Account Receivable":
