@@ -79,6 +79,7 @@ def main():
 
     👉 **Upload your file on the left panel to get started.**
     """)
+    st.warning("Make sure your file format matches the required template before uploading.")
 
     step = st.sidebar.radio("Select Process Type", [
         "Advance Payment",
