@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import numpy as np
-from ar_cleaner import transform_account_receivable, transform_other_payable
+from ar_cleaner import transform_account_receivable, transform_other_payable, transform_account_payable
+from as_cleaner import transform_advance_sales
 
 def to_excel(df, engine="xlsxwriter"):
     output = BytesIO()
@@ -89,7 +90,7 @@ def main():
             st.write("### Preview of Uploaded Data")
             st.dataframe(df.head())
 
-            if st.button("Transform to AR Keystone Format"):
+            if st.button("Transform to AR Format"):
                 transformed_df = transform_account_receivable(df)
 
                 st.success("✅ Data transformed successfully!")
@@ -97,9 +98,9 @@ def main():
                 st.dataframe(transformed_df.head(50))
 
                 st.download_button(
-                    label="📥 Download AR Keystone Excel",
+                    label="📥 Download AR Excel",
                     data=to_excel(transformed_df, engine="xlsxwriter"),
-                    file_name="AR_Keystone_Formatted.xlsx",
+                    file_name="AR_Formatted.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
         else:
@@ -128,6 +129,55 @@ def main():
                 )
         else:
             st.info("Please upload OP.xlsx to proceed.")
+
+    elif step == "Account Payable":
+        st.subheader("📥 Upload Account Payable File")
+        uploaded_file = st.file_uploader("Upload AP.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to AP Format"):
+                transformed_df = transform_account_payable(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download AP Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="AP_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload AP.xlsx to proceed.")
+    elif step == "Advance Sales":
+        st.subheader("📥 Upload Advance Sales File")
+        uploaded_file = st.file_uploader("Upload AS.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to AS Format"):
+                transformed_df = transform_advance_sales(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download AS Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="AS_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload AS.xlsx to proceed.")
     else:
         st.warning(f"⚠️ The '{step}' process is not implemented yet.")
 

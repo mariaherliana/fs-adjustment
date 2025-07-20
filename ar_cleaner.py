@@ -195,8 +195,7 @@ def transform_other_payable(df):
     op_df["Clean_Trans_No"] = op_df["Trans_No"].apply(clean_trans_no)
     pay_df["Clean_Trans_No"] = pay_df["Trans_No"].apply(clean_trans_no)
 
-    # --- Handle multiple invoice payments ---
-    # Split comma-separated invoices in payment rows
+    # --- Expand multiple payments ---
     expanded_payments = []
     for _, row in pay_df.iterrows():
         trans_list = [t.strip() for t in str(row["Clean_Trans_No"]).split(",")]
@@ -205,16 +204,13 @@ def transform_other_payable(df):
                 "Clean_Trans_No": trans,
                 "Payment Date": row["Date"],
                 "Payment Voucher No": row["Trans_No"],
-                "Payment Amount": row["Credit"] if not pd.isna(row["Credit"]) else 0
+                "Payment Amount": row["Debit"] if not pd.isna(row["Debit"]) else 0
             })
-    pay_expanded_df = pd.DataFrame(expanded_payments)
+    pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
 
-    # --- Merge OP with Payments ---
-    merged = op_df.merge(
-        pay_expanded_df,
-        how="left",
-        on="Clean_Trans_No"
-    )
+    # --- Merge AP with Payments ---
+    merged = ap_df.merge(pay_expanded_df, how="left", on="Clean_Trans_No")
+    merged = merged.drop_duplicates(subset=["Clean_Trans_No", "Payment Voucher No"], keep="first")
 
     # --- Fill Columns ---
     merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.date
@@ -311,7 +307,6 @@ def transform_other_payable(df):
         df_final = df_normal_final
 
     # Replace NaN with empty string for safe Excel export
-    # Replace NaN with empty string for safe Excel export
     df_final = df_final.replace({np.nan: ""})
 
     # ✅ Rename columns as requested
@@ -320,5 +315,143 @@ def transform_other_payable(df):
         "Trans_No": "Inv No",
         "Debit": "Original Amount"
     }, inplace=True)
+
+    return df_final
+
+def extract_trans_nos_from_description(desc):
+    """
+    Extracts Trans Nos like 0001889/AS/III/2025 from payment description.
+    Returns a list of Trans Nos.
+    """
+    if pd.isna(desc):
+        return []
+    pattern = r"\d{3,}/[A-Z]+/[A-Z]+/[IVX]+/\d{4}"
+    return re.findall(pattern, desc)
+
+def transform_account_payable(df):
+    df = df.copy()
+
+    # --- Ensure correct columns ---
+    df = df[["Date", "Vendor/Client", "Trans No", "Description", "Debit", "Credit"]]
+
+    # --- Normalize column names ---
+    df.rename(columns={
+        "Vendor/Client": "Vendor",
+        "Trans No": "Trans_No"
+    }, inplace=True)
+
+    # --- Separate AP & Payments (match Trans No containing "paid") ---
+    df["is_payment"] = df["Trans_No"].str.contains(r"paid", case=False, na=False)
+
+    ap_df = df[~df["is_payment"]].copy()   # Invoice rows
+    pay_df = df[df["is_payment"]].copy()   # Payment rows
+
+    # --- Clean Trans_No for matching ---
+    def clean_trans_no(t):
+        return re.sub(r"(_?paid)", "", str(t), flags=re.IGNORECASE).strip()
+
+    ap_df["Clean_Trans_No"] = ap_df["Trans_No"].apply(clean_trans_no)
+    pay_df["Clean_Trans_No"] = pay_df["Trans_No"].apply(clean_trans_no)
+
+    # --- Expand multiple payments (comma-separated Trans No in payment rows) ---
+    expanded_payments = []
+    for _, row in pay_df.iterrows():
+        # Split by commas and also clean '_paid' or 'Paid'
+        trans_list = [re.sub(r"(_?paid)", "", t.strip(), flags=re.IGNORECASE)
+                      for t in str(row["Clean_Trans_No"]).split(",")]
+
+        # Divide payment amount equally OR proportionally (will adjust later)
+        for trans in trans_list:
+            expanded_payments.append({
+                "Clean_Trans_No": trans,
+                "Payment Date": row["Date"],
+                "Payment Voucher No": row["Trans_No"],
+                "Payment Amount": row["Debit"] if not pd.isna(row["Debit"]) else 0
+            })
+    pay_expanded_df = pd.DataFrame(expanded_payments)
+
+    # --- Merge AP with Payments ---
+    merged = ap_df.merge(
+        pay_expanded_df,
+        how="left",
+        on="Clean_Trans_No"
+    )
+
+    # --- Fill Columns ---
+    merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.date
+    merged["Currency"] = "IDR"  # default
+    merged["Rate"] = 1  # default
+
+    merged["Original Amount"] = merged["Credit"].fillna(0)
+    merged["Amount"] = merged["Original Amount"].round()
+
+    merged["Payment Amount"] = merged["Payment Amount"].fillna(0)
+    merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
+
+    # ✅ --- Proportional Payment Allocation (run AFTER Original Amount exists) ---
+    for pay_voucher, group in merged.groupby("Payment Voucher No"):
+        if pd.isna(pay_voucher):
+            continue
+        total_payment = group["Payment Amount"].max()  # total payment recorded once
+        total_invoice = group["Original Amount"].sum()
+
+        for idx in group.index:
+            inv_amount = merged.at[idx, "Original Amount"]
+            if total_invoice == 0:
+                allocated_payment = 0
+            elif total_payment >= total_invoice:
+                allocated_payment = inv_amount  # fully paid
+            else:
+                allocated_payment = round((inv_amount / total_invoice) * total_payment, 2)
+            merged.at[idx, "Payment Amount"] = allocated_payment
+
+    # --- Ending Balance ---
+    merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
+
+    # --- Generate AP Voucher No: AP-YY-MM-####
+    merged["Voucher No"] = merged.groupby(
+        [merged["Date"].apply(lambda x: f"{x:%y-%m}" if pd.notna(x) else "00-00")]
+    ).cumcount() + 1
+    merged["Voucher No"] = "AP-" + merged["Date"].apply(lambda x: f"{x:%y-%m}" if pd.notna(x) else "00-00") + "-" + \
+                           merged["Voucher No"].astype(str).str.zfill(3)
+
+    # --- Build final dataframe ---
+    df_transformed = merged[[
+        "Date", "Vendor", "Trans_No", "Voucher No", "Description",
+        "Currency", "Original Amount", "Rate", "Amount",
+        "Payment Date", "Payment Voucher No", "Payment Amount", "Ending Balance"
+    ]]
+
+    # --- Add Subtotals per Vendor ---
+    grouped = []
+    for vendor, group in df_transformed.groupby("Vendor", dropna=False):
+        grouped.append(group)
+        subtotal_row = pd.Series({
+            "Date": f"Subtotal {vendor}",
+            "Vendor": "",
+            "Trans_No": "",
+            "Voucher No": "",
+            "Description": "",
+            "Currency": "",
+            "Original Amount": group["Original Amount"].sum(),
+            "Rate": "",
+            "Amount": group["Amount"].sum(),
+            "Payment Date": "",
+            "Payment Voucher No": "",
+            "Payment Amount": group["Payment Amount"].sum(),
+            "Ending Balance": group["Ending Balance"].sum()
+        })
+        grouped.append(pd.DataFrame([subtotal_row]))
+
+    df_final = pd.concat(grouped, ignore_index=True)
+
+    # ✅ Rename columns as required
+    df_final.rename(columns={
+        "Vendor": "Company Name",
+        "Trans_No": "Inv No"
+    }, inplace=True)
+
+    # Replace NaN with empty string for safe Excel export
+    df_final = df_final.replace({np.nan: ""})
 
     return df_final
