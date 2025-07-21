@@ -4,6 +4,12 @@ from io import BytesIO
 import numpy as np
 from ar_cleaner import transform_account_receivable, transform_other_payable, transform_account_payable
 from as_cleaner import transform_advance_sales
+from temp_receipt_cleaner import transform_temp_receipt
+from adv_payment_cleaner import transform_advance_payment
+from prepaid_pph23_cleaner import transform_prepaid_pph23
+from or_cleaner import transform_other_receivable
+from op_rcj_cleaner import transform_other_payable_rcj
+from rou_calculator import transform_rou_calculator
 
 def to_excel(df, engine="xlsxwriter"):
     output = BytesIO()
@@ -49,7 +55,18 @@ def to_excel(df, engine="xlsxwriter"):
                 "num_format": "#,##0.00"
             })
 
-            # Write rows (apply subtotal format if row contains "Subtotal")
+            # === TOTAL Row Formatting (Yellow bg + Black font) ===
+            total_format = workbook.add_format({
+                "bold": True,
+                "font_color": "black",
+                "bg_color": "yellow",
+                "border": 1,
+                "num_format": "#,##0.00"
+            })
+
+            last_row_idx = len(df) + 1  # +1 because headers start at row 1
+
+            # Write rows (apply different formatting if needed)
             for row_num, row_data in enumerate(df.itertuples(index=False), start=2):
                 is_subtotal = (
                     isinstance(row_data[0], str) and "Subtotal" in row_data[0]
@@ -59,6 +76,8 @@ def to_excel(df, engine="xlsxwriter"):
                         cell_value = ""
                     if is_subtotal:
                         worksheet.write(row_num, col_num, cell_value, subtotal_format)
+                    elif row_num == last_row_idx:
+                        worksheet.write(row_num, col_num, cell_value, total_format)
 
             # Auto-adjust column widths
             for i, col in enumerate(df.columns):
@@ -68,17 +87,30 @@ def to_excel(df, engine="xlsxwriter"):
     return output.getvalue()
 
 def main():
-    st.set_page_config(page_title="Data Cleanup Wizard", layout="wide")
-    st.title("🧹 Internal Data Cleanup Wizard")
+    st.set_page_config(page_title="Accuria", layout="wide")
+    st.title("🧹 Accuria Data Cleanup")
+    st.markdown("""
+    Welcome to **Accuria Data Cleanup**!  
+    This tool helps you clean and transform accounting data from Accurate Accounting, including:
+    - **Advance Sales Adjustments**
+    - **Account Receivable & Payable Reports**
+    - **Other Payable Cleanups**
+
+    👉 **Upload your file on the left panel to get started.**
+    """)
+    st.warning("Make sure your file format matches the required template before uploading.")
 
     step = st.sidebar.radio("Select Process Type", [
         "Advance Payment",
         "Other Payable",
+        "Other Payable(RCJ)",
         "Account Payable",
         "Temporary Receipt",
         "Advance Sales",
         "Account Receivable",
-        "Other Receivable"
+        "Other Receivable",
+        "Prepaid PPh 23",
+        "ROU Calculator",
     ])
 
     if step == "Account Receivable":
@@ -178,6 +210,131 @@ def main():
                 )
         else:
             st.info("Please upload AS.xlsx to proceed.")
+    elif step == "Temporary Receipt":
+        st.subheader("📥 Upload Temporary Receipt File")
+        uploaded_file = st.file_uploader("Upload TR.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to TR Format"):
+                transformed_df = transform_temp_receipt(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download TR Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="TR_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload AS.xlsx to proceed.")
+    elif step == "Advance Payment":
+        st.subheader("📥 Upload Advance Payment File")
+        uploaded_file = st.file_uploader("Upload Adv. Payment.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to Adv. Payment Format"):
+                transformed_df = transform_advance_payment(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download Adv. Payment Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="Adv_Payment_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload Adv. Payment.xlsx to proceed.")
+    elif step == "Prepaid PPh 23":
+        st.subheader("📥 Upload Prepaid PPh 23 File")
+        st.markdown("""
+        Wanna clean up your Prepaid PPh 23? Go try this!
+        """)
+        uploaded_file = st.file_uploader("Upload Prepaid PPh23.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to Prepaid PPh 23 Format"):
+                transformed_df = transform_prepaid_pph23(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download Prepaid PPh 23 Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="Prepaid_PPh23_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload Prepaid PPh 23.xlsx to proceed.")
+    elif step == "Other Receivable":
+        st.subheader("📥 Upload Other Receivable File")
+        uploaded_file = st.file_uploader("Upload OR.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to OR Format"):
+                transformed_df = transform_other_receivable(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download OR Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="OR_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload OR.xlsx to proceed.")
+    elif step == "Other Payable(RCJ)":
+        st.subheader("📥 Upload OP(RCJ) File")
+        uploaded_file = st.file_uploader("Upload OP(RCJ).xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to OP(RCJ) Format"):
+                transformed_df = transform_other_payable_rcj(df)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download OP(RCJ) Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="OP(RCJ)_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload OP(RCJ).xlsx to proceed.")
+    elif step == "ROU Calculator":
+        transform_rou_calculator()
     else:
         st.warning(f"⚠️ The '{step}' process is not implemented yet.")
 
