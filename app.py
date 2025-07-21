@@ -110,7 +110,10 @@ def main():
         "Account Receivable",
         "Other Receivable",
         "Prepaid PPh 23",
+<<<<<<< HEAD
         "ROU Calculator",
+=======
+>>>>>>> 21c0af02519f21c0059d1931a675fb980a2e8553
     ])
 
     if step == "Account Receivable":
