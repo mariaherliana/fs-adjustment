@@ -4,3 +4,4 @@ numpy
 python-dateutil
 numpy_financial
 openpyxl
+xlsxwriter
