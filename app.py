@@ -166,8 +166,8 @@ def main():
             """
         }
     # === Show explanation for selected step ===
-    with st.expander(f"ℹ️ About {step}", expanded=False):
-        st.markdown(explanations.get(step, "No explanation available."))
+    #with st.expander(f"ℹ️ About {step}", expanded=False):
+        #st.markdown(explanations.get(step, "No explanation available."))
 
     if step == "Account Receivable":
         st.subheader("📥 Upload AR File")
