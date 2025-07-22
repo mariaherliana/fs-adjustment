@@ -112,6 +112,59 @@ def main():
         "Prepaid PPh 23",
         "ROU Calculator",
     ])
+    
+    # === Explanations dictionary === #
+    explanations = {
+            "Advance Payment": """
+            **What this does:**
+            - Strictly matches debit and credit amounts.
+            - Calculates Outstanding = Amount - Payment Amount.
+            - Adds total row at the bottom.
+            """,
+            "Other Payable": """
+            **What this does:**
+            - Groups data by Trans No.
+            - Amount = Other Payable
+            - Exchange Gain/Loss = From Exchange Loss (negative) or Gain (positive).
+            - Amount After Exchange Gain/Loss = From Other Payable (Revcomm Japan).
+            """,
+            "Other Payable(RCJ)": """
+            **What this does:**
+            - No matching logic required.
+            - Default Company Name = "RevComm Japan".
+            - Adds total row at the bottom.
+            """,
+            "Account Payable": """
+            **What this does:**
+            - Cleans AP report and calculates outstanding balances.
+            """,
+            "Temporary Receipt": """
+            **What this does:**
+            - Strictly matches debit-credit receipts.
+            """,
+            "Advance Sales": """
+            **What this does:**
+            - Processes advance sales and calculates outstanding balances.
+            """,
+            "Account Receivable": """
+            **What this does:**
+            - Cleans AR report and calculates outstanding balances.
+            """,
+            "Other Receivable": """
+            **What this does:**
+            - No matching logic required.
+            - Only tidies up the data.
+            """,
+            "Prepaid PPh 23": """
+            **What this does:**
+            - Cleans prepaid PPh 23 report.
+            - Refund/Return PPh 23 appears as a negative value.
+            """,
+            "ROU Calculator": """
+            **What this does:**
+            - Calculates Right-of-Use (ROU) assets and liabilities.
+            """
+        }
 
     if step == "Account Receivable":
         st.subheader("📥 Upload AR File")
