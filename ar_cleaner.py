@@ -367,7 +367,7 @@ def transform_account_payable(df):
                 # ✅ total payment only once, 0 for the rest
                 "Payment Amount": row["Debit"] if i == 0 else 0
             })
-    pay_expanded_df = pd.DataFrame(expanded_payments)
+    pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
 
     # --- Merge AP with Payments ---
     merged = ap_df.merge(
