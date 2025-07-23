@@ -356,17 +356,16 @@ def transform_account_payable(df):
     # --- Expand multiple payments (comma-separated Trans No in payment rows) ---
     expanded_payments = []
     for _, row in pay_df.iterrows():
-        # Split by commas and also clean '_paid' or 'Paid'
         trans_list = [re.sub(r"(_?paid)", "", t.strip(), flags=re.IGNORECASE)
                       for t in str(row["Clean_Trans_No"]).split(",")]
 
-        # Divide payment amount equally OR proportionally (will adjust later)
-        for trans in trans_list:
+        for i, trans in enumerate(trans_list):
             expanded_payments.append({
                 "Clean_Trans_No": trans,
                 "Payment Date": row["Date"],
                 "Payment Voucher No": row["Trans_No"],
-                "Payment Amount": row["Debit"] if not pd.isna(row["Debit"]) else 0
+                # ✅ total payment only once, 0 for the rest
+                "Payment Amount": row["Debit"] if i == 0 else 0
             })
     pay_expanded_df = pd.DataFrame(expanded_payments)
 
@@ -392,18 +391,9 @@ def transform_account_payable(df):
     for pay_voucher, group in merged.groupby("Payment Voucher No"):
         if pd.isna(pay_voucher):
             continue
-        total_payment = group["Payment Amount"].max()  # total payment recorded once
-        total_invoice = group["Original Amount"].sum()
-
+        # ✅ Just copy Original Amount
         for idx in group.index:
-            inv_amount = merged.at[idx, "Original Amount"]
-            if total_invoice == 0:
-                allocated_payment = 0
-            elif total_payment >= total_invoice:
-                allocated_payment = inv_amount  # fully paid
-            else:
-                allocated_payment = round((inv_amount / total_invoice) * total_payment, 2)
-            merged.at[idx, "Payment Amount"] = allocated_payment
+            merged.at[idx, "Payment Amount"] = merged.at[idx, "Original Amount"]
 
     # --- Ending Balance ---
     merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
