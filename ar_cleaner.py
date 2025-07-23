@@ -60,10 +60,10 @@ def add_customer_subtotals(df):
     for cust, group in df.groupby("Customer"):
         groups.append(group)
         subtotal_row = pd.Series({
-            "Sales Invoice Date": None,
+            "Sales Invoice Date": f"{cust} Subtotal",
             "Sales Invoice No": None,
             "Sales Invoice Voucher No": None,
-            "Customer": f"{cust} Subtotal",
+            "Customer": None,
             "Sales Invoice Description": None,
             "Currency": "IDR",
             "Sales Invoice Amount": group["Sales Invoice Amount"].sum(),
@@ -208,7 +208,7 @@ def transform_other_payable(df):
             })
     pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
 
-    # --- Merge AP with Payments ---
+    # --- Merge OP with Payments ---
     merged = ap_df.merge(pay_expanded_df, how="left", on="Clean_Trans_No")
     merged = merged.drop_duplicates(subset=["Clean_Trans_No", "Payment Voucher No"], keep="first")
 
@@ -353,21 +353,30 @@ def transform_account_payable(df):
     ap_df["Clean_Trans_No"] = ap_df["Trans_No"].apply(clean_trans_no)
     pay_df["Clean_Trans_No"] = pay_df["Trans_No"].apply(clean_trans_no)
 
-    # --- Expand multiple payments (comma-separated Trans No in payment rows) ---
+    # ✅ Drop duplicate AP invoices before merging (keep first occurrence)
+    ap_df = ap_df.drop_duplicates(subset=["Clean_Trans_No"], keep="first")
+
+    # --- Expand multiple payments ---
     expanded_payments = []
     for _, row in pay_df.iterrows():
         trans_list = [re.sub(r"(_?paid)", "", t.strip(), flags=re.IGNORECASE)
                       for t in str(row["Clean_Trans_No"]).split(",")]
 
-        for i, trans in enumerate(trans_list):
+        for trans in trans_list:
             expanded_payments.append({
                 "Clean_Trans_No": trans,
                 "Payment Date": row["Date"],
                 "Payment Voucher No": row["Trans_No"],
-                # ✅ total payment only once, 0 for the rest
-                "Payment Amount": row["Debit"] if i == 0 else 0
+                "Payment Amount": row["Debit"] if not pd.isna(row["Debit"]) else 0
             })
-    pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
+
+    pay_expanded_df = pd.DataFrame(expanded_payments)
+
+    # ✅ Ensure 1 payment row per invoice per voucher
+    pay_expanded_df = (
+        pay_expanded_df
+        .drop_duplicates(subset=["Clean_Trans_No", "Payment Voucher No"], keep="first")
+    )
 
     # --- Merge AP with Payments ---
     merged = ap_df.merge(
