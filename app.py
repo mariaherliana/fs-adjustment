@@ -115,18 +115,14 @@ def main():
     
     # === Explanations dictionary === #
     explanations = {
-            "Advance Payment": """
-            **What this does:**
-            - Strictly matches debit and credit amounts.
-            - Calculates Outstanding = Amount - Payment Amount.
-            - Adds total row at the bottom.
-            """,
             "Other Payable": """
-            **What this does:**
-            - Groups data by Trans No.
-            - Amount = Other Payable
-            - Exchange Gain/Loss = From Exchange Loss (negative) or Gain (positive).
-            - Amount After Exchange Gain/Loss = From Other Payable (Revcomm Japan).
+            **Things to Check:**
+            - Check that the **Trans No** matches with the payment 
+                - Other Payable: Invoice no
+                - Payment: Invoice no_paid
+            - Make sure you have both the **Other Payable (OP) journal** and the **Payment Journal** recorded correctly
+            - If you only have a Payment journal, the result may not match correctly and will most likely show **0**.
+            - If the OP journal is not matched, it will show as **outstanding in the Ending Balance**. If the payment is not matched, it will also show as **00 amount**.
             """,
             "Other Payable(RCJ)": """
             **What this does:**
