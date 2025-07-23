@@ -209,7 +209,7 @@ def transform_other_payable(df):
     pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
 
     # --- Merge OP with Payments ---
-    merged = ap_df.merge(pay_expanded_df, how="left", on="Clean_Trans_No")
+    merged = op_df.merge(pay_expanded_df, how="left", on="Clean_Trans_No")
     merged = merged.drop_duplicates(subset=["Clean_Trans_No", "Payment Voucher No"], keep="first")
 
     # --- Fill Columns ---
