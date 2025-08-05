@@ -248,7 +248,7 @@ def main():
             st.dataframe(df.head())
 
             if st.button("Transform to AS Format"):
-                transformed_df = transform_advance_sales(df)
+                transformed_df, single_term_df = transform_advance_sales(df)
 
                 st.success("✅ Data transformed successfully!")
                 st.write("### Transformed Data Preview")
