@@ -41,8 +41,12 @@ def transform_advance_sales(df):
         lambda r: r["Start_Month"] if pd.isna(r["End_Month"]) else r["End_Month"], axis=1
     )
 
-    # ✅ Merge items per invoice
-    grouped = df.groupby(["Company Name", "Invoice", "Tenant_ID", "Invoice Date"], as_index=False).agg({
+    # ✅ Merge items per invoice (combine tenant IDs if needed)
+    def join_tenant_ids(x):
+        return ", ".join(sorted(set(x.dropna().astype(str))))
+
+    grouped = df.groupby(["Company Name", "Invoice", "Invoice Date"], as_index=False).agg({
+        "Tenant_ID": join_tenant_ids,
         "Start_Month": "min",
         "End_Month": "max",
         "Total_Term": lambda x: mode(x),  # ✅ use most common term, not sum
@@ -55,12 +59,23 @@ def transform_advance_sales(df):
         last_day = (end + pd.offsets.MonthEnd(0)).date()
         return f"{start_str} - {last_day.strftime('%d-%m-%Y')}"
 
+        # ✅ Separate out single-month, same-month invoices
+    def is_same_month(r):
+        return (
+            r["Total_Term"] == 1 and
+            r["Invoice Date"].month == r["Start_Month"].month and
+            r["Invoice Date"].year == r["Start_Month"].year
+        )
+
+    single_term_same_month = grouped[grouped.apply(is_same_month, axis=1)].copy()
+    grouped = grouped[~grouped.apply(is_same_month, axis=1)].copy()
+
     grouped["Period"] = grouped.apply(lambda r: format_period(r["Start_Month"], r["End_Month"]), axis=1)
 
-    # ✅ Monthly Sales Recognition
+     # ✅ Monthly Sales Recognition
     grouped["Monthly Sales Recognition"] = (grouped["Amount"] / grouped["Total_Term"]).round(2)
 
-    # ✅ Build period allocations with CATCH-UP logic
+    # ✅ Build period allocations with improved logic
     all_periods = []
 
     for i, row in grouped.iterrows():
@@ -70,11 +85,6 @@ def transform_advance_sales(df):
         monthly_amount = row["Monthly Sales Recognition"]
 
         periods = pd.date_range(start=start, end=end, freq="MS")
-
-        # --- Catch-up logic ---
-        allowed_periods = [p for p in periods if p >= pd.Timestamp(invoice_date.replace(day=1))]
-        passed_months = len(periods) - len(allowed_periods)
-        catch_up = passed_months * monthly_amount
 
         row_data = {
             "Date": row["Invoice Date"],
@@ -88,14 +98,32 @@ def transform_advance_sales(df):
             "Monthly Sales Recognition": monthly_amount
         }
 
-        for j, p in enumerate(periods):
-            col_name = p.strftime("%m-%Y")
-            if p < pd.Timestamp(invoice_date.replace(day=1)):
+        # ✅ Rule 2: Skip monthly allocation if invoice = start month and term = 1
+        if row["Total_Term"] == 1 and invoice_date.month == start.month and invoice_date.year == start.year:
+            for p in periods:
+                col_name = p.strftime("%m-%Y")
                 row_data[col_name] = 0
-            elif j == periods.get_indexer([allowed_periods[0]])[0]:  # first allowed period
-                row_data[col_name] = monthly_amount + catch_up
-            else:
-                row_data[col_name] = monthly_amount
+        else:
+
+            for j, p in enumerate(periods):
+                    col_name = p.strftime("%m-%Y")
+
+                    if p < start:
+                        row_data[col_name] = 0
+
+                    elif p < invoice_date.replace(day=1):
+                        # Before invoice month: defer to catch-up
+                        row_data[col_name] = 0
+
+                    elif p == invoice_date.replace(day=1):
+                        # Catch-up: include all unrecognized months before this
+                        catch_up_months = [q for q in periods if start <= q < p]
+                        catch_up_total = len(catch_up_months) * monthly_amount
+                        row_data[col_name] = monthly_amount + catch_up_total
+
+                    else:
+                        # Normal monthly allocation
+                        row_data[col_name] = monthly_amount
 
         # --- Fiscal Year Totals ---
         fy_totals = {}
@@ -160,4 +188,4 @@ def transform_advance_sales(df):
     total_row["Company Name"] = "TOTAL"
     final_df = pd.concat([final_df, pd.DataFrame([total_row])], ignore_index=True)
 
-    return final_df
+    return final_df, single_term_same_month
