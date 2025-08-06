@@ -10,7 +10,6 @@ from prepaid_pph23_cleaner import transform_prepaid_pph23
 from or_cleaner import transform_other_receivable
 from op_rcj_cleaner import transform_other_payable_rcj
 from rou_calculator import transform_rou_calculator
-from deferral_revenue import transform_deferral_revenue
 from customer_dict import customer_dict
 from exchange_rate_calculator import get_exchange_rates
 
@@ -110,7 +109,6 @@ def main():
         "Account Payable",
         "Temporary Receipt",
         "Advance Sales",
-        "Deferral Revenue",
         "Account Receivable",
         "Other Receivable",
         "Prepaid PPh 23",
@@ -224,30 +222,6 @@ def main():
                 )
         else:
             st.info("Please upload AS.xlsx to proceed.")
-    elif step == "Deferral Revenue":
-        st.subheader("📥 Upload Deferral Revenue File")
-        uploaded_file = st.file_uploader("Upload DR.xlsx", type=["xlsx"])
-
-        if uploaded_file:
-            df = pd.read_excel(uploaded_file)
-            st.write("### Preview of Uploaded Data")
-            st.dataframe(df.head())
-
-            if st.button("Transform to DR Format"):
-                transformed_df = transform_deferral_revenue(df, customer_dict)
-
-                st.success("✅ Data transformed successfully!")
-                st.write("### Transformed Data Preview")
-                st.dataframe(transformed_df.head(50))
-
-                st.download_button(
-                    label="📥 Download DR Excel",
-                    data=to_excel(transformed_df, engine="xlsxwriter"),
-                    file_name="DR_Formatted.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-        else:
-            st.info("Please upload DR.xlsx to proceed.")
     elif step == "Temporary Receipt":
         st.subheader("📥 Upload Temporary Receipt File")
         uploaded_file = st.file_uploader("Upload TR.xlsx", type=["xlsx"])
