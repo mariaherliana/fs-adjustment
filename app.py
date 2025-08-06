@@ -10,6 +10,9 @@ from prepaid_pph23_cleaner import transform_prepaid_pph23
 from or_cleaner import transform_other_receivable
 from op_rcj_cleaner import transform_other_payable_rcj
 from rou_calculator import transform_rou_calculator
+from deferral_revenue import transform_deferral_revenue
+from customer_dict import customer_dict
+from exchange_rate_calculator import get_exchange_rates
 
 def to_excel(df, engine="xlsxwriter"):
     output = BytesIO()
@@ -107,63 +110,13 @@ def main():
         "Account Payable",
         "Temporary Receipt",
         "Advance Sales",
+        "Deferral Revenue",
         "Account Receivable",
         "Other Receivable",
         "Prepaid PPh 23",
+        "Exchange Rate Calculator",
         "ROU Calculator",
     ])
-    
-    # === Explanations dictionary === #
-    explanations = {
-            "Other Payable": """
-            **Things to Check:**
-            - Check that the **Trans No** matches with the payment 
-                - Other Payable: Invoice no
-                - Payment: Invoice no_paid
-            - Make sure you have both the **Other Payable (OP) journal** and the **Payment Journal** recorded correctly
-            - If you only have a Payment journal, the result may not match correctly and will most likely show **0**.
-            - If the OP journal is not matched, it will show as **outstanding in the Ending Balance**. If the payment is not matched, it will also show as **00 amount**.
-            """,
-            "Other Payable(RCJ)": """
-            **What this does:**
-            - No matching logic required.
-            - Default Company Name = "RevComm Japan".
-            - Adds total row at the bottom.
-            """,
-            "Account Payable": """
-            **What this does:**
-            - Cleans AP report and calculates outstanding balances.
-            """,
-            "Temporary Receipt": """
-            **What this does:**
-            - Strictly matches debit-credit receipts.
-            """,
-            "Advance Sales": """
-            **What this does:**
-            - Processes advance sales and calculates outstanding balances.
-            """,
-            "Account Receivable": """
-            **What this does:**
-            - Cleans AR report and calculates outstanding balances.
-            """,
-            "Other Receivable": """
-            **What this does:**
-            - No matching logic required.
-            - Only tidies up the data.
-            """,
-            "Prepaid PPh 23": """
-            **What this does:**
-            - Cleans prepaid PPh 23 report.
-            - Refund/Return PPh 23 appears as a negative value.
-            """,
-            "ROU Calculator": """
-            **What this does:**
-            - Calculates Right-of-Use (ROU) assets and liabilities.
-            """
-        }
-    # === Show explanation for selected step ===
-    #with st.expander(f"ℹ️ About {step}", expanded=False):
-        #st.markdown(explanations.get(step, "No explanation available."))
 
     if step == "Account Receivable":
         st.subheader("📥 Upload AR File")
@@ -200,14 +153,23 @@ def main():
 
             if st.button("Transform to OP Format"):
                 transformed_df = transform_other_payable(df)
+                transformed_df.rename(columns={"Debit": "Original Amount"}, inplace=True)
 
                 st.success("✅ Data transformed successfully!")
                 st.write("### Transformed Data Preview")
                 st.dataframe(transformed_df.head(50))
 
+                # Split out unmatched payments if they exist
+                unmatched = transformed_df[transformed_df["Date"] == "Unmatched Payments"]
+                if not unmatched.empty:
+                    st.warning("⚠️ Unmatched payments detected!")
+                    st.write("### Unmatched Payments")
+                    st.dataframe(unmatched)
+
+                # Main transformed file download
                 st.download_button(
                     label="📥 Download OP Excel",
-                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    data=to_excel(transformed_df),
                     file_name="OP_Formatted.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
@@ -262,6 +224,30 @@ def main():
                 )
         else:
             st.info("Please upload AS.xlsx to proceed.")
+    elif step == "Deferral Revenue":
+        st.subheader("📥 Upload Deferral Revenue File")
+        uploaded_file = st.file_uploader("Upload DR.xlsx", type=["xlsx"])
+
+        if uploaded_file:
+            df = pd.read_excel(uploaded_file)
+            st.write("### Preview of Uploaded Data")
+            st.dataframe(df.head())
+
+            if st.button("Transform to DR Format"):
+                transformed_df = transform_deferral_revenue(df, customer_dict)
+
+                st.success("✅ Data transformed successfully!")
+                st.write("### Transformed Data Preview")
+                st.dataframe(transformed_df.head(50))
+
+                st.download_button(
+                    label="📥 Download DR Excel",
+                    data=to_excel(transformed_df, engine="xlsxwriter"),
+                    file_name="DR_Formatted.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        else:
+            st.info("Please upload DR.xlsx to proceed.")
     elif step == "Temporary Receipt":
         st.subheader("📥 Upload Temporary Receipt File")
         uploaded_file = st.file_uploader("Upload TR.xlsx", type=["xlsx"])
@@ -387,9 +373,21 @@ def main():
             st.info("Please upload OP(RCJ).xlsx to proceed.")
     elif step == "ROU Calculator":
         transform_rou_calculator()
+    elif step == "Exchange Rate Calculator":
+        st.subheader("💱 Exchange Rate Calculator")
+
+        # User Inputs
+        currency = st.selectbox("Select Currency", ["USD", "SGD", "JPY", "EUR", "AUD"])
+        date = st.date_input("Select Date", value=pd.Timestamp.today())
+
+        if st.button("Get Exchange Rates"):
+            rates = get_exchange_rates(currency, str(date))
+
+            st.success(f"✅ Exchange Rates for {currency} on {date}")
+            st.write(f"**KMK Rate**: {rates['KMK Rate']} IDR/{currency}" if rates['KMK Rate'] else "KMK Rate not available")
+            st.write(f"**BI Rate**: {rates['BI Rate']} IDR/{currency}" if rates['BI Rate'] else "BI Rate not available")
     else:
         st.warning(f"⚠️ The '{step}' process is not implemented yet.")
-
 
 if __name__ == "__main__":
     main()
