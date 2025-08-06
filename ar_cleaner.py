@@ -103,7 +103,7 @@ def transform_account_receivable(df):
         "Sales Invoice Amount": invoices["Original Amount"],
         "Rate": 1,
         "Amount": invoices["Original Amount"].round(),
-        "Sales Receipt Date": invoices["Sales Receipt Date"],  # ✅ Now already correct
+        "Sales Receipt Date": invoices["Sales Receipt Date"],  
         "Sales Receipt Voucher No": invoices["Sales Receipt Voucher No"],
         "Sales Receipt Amount": invoices["Sales Receipt Amount"],
     })
@@ -173,61 +173,71 @@ def add_vendor_subtotals_op(df):
 def transform_other_payable(df):
     df = df.copy()
 
-    # --- Ensure correct columns ---
-    df = df[["Date", "Vendor/Client", "Trans No", "Description", "Currency", "Rate", "Debit", "Credit"]]
+    # Normalize column names
+    df.columns = df.columns.str.strip().str.replace(" ", "_").str.replace("/", "_")
 
-    # --- Normalize column names ---
-    df.rename(columns={
-        "Vendor/Client": "Vendor",
-        "Trans No": "Trans_No"
-    }, inplace=True)
+    # Ensure required columns are present
+    df = df[["Date", "Vendor_Client", "Trans_No", "Description", "Currency", "Rate", "Debit", "Credit"]]
 
-    # --- Separate OP & Payments ---
+    # Rename manual vendor column
+    df.rename(columns={"Vendor_Client": "Vendor_Manual"}, inplace=True)
+
+    # If system 'Vendor' exists, fallback to manual if null; else use manual
+    if "Vendor" in df.columns:
+        df["Vendor"] = df["Vendor"].fillna(df["Vendor_Manual"])
+    else:
+        df["Vendor"] = df["Vendor_Manual"]
+
+    # --- Separate OPs and Payments ---
     df["is_payment"] = df["Trans_No"].str.contains(r"(paid|top\s*up|topup)", case=False, na=False)
 
     op_df = df[~df["is_payment"]].copy()
     pay_df = df[df["is_payment"]].copy()
 
-    # Clean Trans_No for OP matching (remove "_paid" or "paid")
+    # --- Clean Trans_No for matching (strip _paid, _partial paid, etc.) ---
     def clean_trans_no(t):
-        return re.sub(r"(_?paid)", "", str(t), flags=re.IGNORECASE)
+        return re.sub(r"(_?partial\s*paid|_?paid|top\s*up|topup)", "", str(t), flags=re.IGNORECASE).strip()
 
     op_df["Clean_Trans_No"] = op_df["Trans_No"].apply(clean_trans_no)
     pay_df["Clean_Trans_No"] = pay_df["Trans_No"].apply(clean_trans_no)
 
-    # --- Expand multiple payments ---
+    # --- Expand payments ---
     expanded_payments = []
     for _, row in pay_df.iterrows():
         trans_list = [t.strip() for t in str(row["Clean_Trans_No"]).split(",")]
         for trans in trans_list:
             expanded_payments.append({
                 "Clean_Trans_No": trans,
+                "Vendor": row["Vendor"],
                 "Payment Date": row["Date"],
                 "Payment Voucher No": row["Trans_No"],
                 "Payment Amount": row["Debit"] if not pd.isna(row["Debit"]) else 0
             })
-    pay_expanded_df = pd.DataFrame(expanded_payments).drop_duplicates()
+    pay_expanded_df = pd.DataFrame(expanded_payments)
 
-    # --- Merge OP with Payments ---
-    merged = op_df.merge(pay_expanded_df, how="left", on="Clean_Trans_No")
+    # --- Aggregate partial payments ---
+    pay_expanded_df = pay_expanded_df.groupby(
+        ["Clean_Trans_No", "Vendor"]
+    ).agg({
+        "Payment Amount": "sum",
+        "Payment Voucher No": lambda x: ", ".join(sorted(set(x))),
+        "Payment Date": "min"
+    }).reset_index()
+
+    # --- Merge OPs with Payments (by Trans_No and Vendor) ---
+    merged = op_df.merge(pay_expanded_df, how="left", on=["Clean_Trans_No", "Vendor"])
     merged = merged.drop_duplicates(subset=["Clean_Trans_No", "Payment Voucher No"], keep="first")
 
     # --- Fill Columns ---
     merged["Date"] = pd.to_datetime(merged["Date"], errors="coerce").dt.date
-    merged["Currency"] = "IDR"  # default
-    merged["Rate"] = 1  # default
+    merged["Currency"] = merged["Currency"].fillna("IDR")
+    merged["Rate"] = merged["Rate"].fillna(1)
 
     # OP Amount = Debit (since Debit = increase OP)
     merged["Amount"] = merged["Debit"].fillna(0).round()
 
     # If payment exists, Payment Amount = OP Amount (fully paid assumption)
-    merged["Payment Amount"] = np.where(
-        merged["Payment Voucher No"].notna(),
-        merged["Amount"],  # full payment allocation
-        0
-    )
-
-    # Ending Balance = Payment Amount - Amount
+    merged["Payment Amount"] = merged["Payment Amount"].fillna(0)
     merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
 
     # Generate Voucher No for OP (OP-YY-MM-###)
@@ -251,15 +261,7 @@ def transform_other_payable(df):
         & ~df_transformed["Description"].str.contains("mailjet", case=False, na=False)
     ]
 
-    # --- Filter the rest of the transactions ---
-    normal_group = df_transformed.drop(reimb_group.index)
-
-    # --- 1. Separate reimbursement and normal transactions ---
-    reimb_group = df_transformed[
-        df_transformed["Description"].str.contains("reimbursement", case=False, na=False)
-        & ~df_transformed["Description"].str.contains("mailjet", case=False, na=False)
-    ]
-
+    # --- 2. Filter the rest of the transactions ---
     normal_group = df_transformed.drop(reimb_group.index)
 
     # --- 2. Group normal transactions by vendor (with subtotals as before) ---
@@ -308,6 +310,41 @@ def transform_other_payable(df):
 
     # Replace NaN with empty string for safe Excel export
     df_final = df_final.replace({np.nan: ""})
+
+    # --- Identify unmatched payments ---
+    matched_keys = set(zip(merged["Clean_Trans_No"], merged["Vendor"]))
+    unmatched_payments = pay_expanded_df[
+        ~pay_expanded_df.apply(lambda row: (row["Clean_Trans_No"], row["Vendor"]) in matched_keys, axis=1)
+    ].copy()
+
+    if not unmatched_payments.empty:
+        unmatched_payments["Date"] = pd.to_datetime(unmatched_payments["Payment Date"], errors="coerce").dt.date
+        unmatched_payments["Voucher No"] = ""
+        unmatched_payments["Description"] = "Unmatched Payment"
+        unmatched_payments["Currency"] = "IDR"
+        unmatched_payments["Debit"] = ""
+        unmatched_payments["Rate"] = ""
+        unmatched_payments["Amount"] = ""
+        unmatched_payments["Ending Balance"] = ""
+        unmatched_payments.rename(columns={
+            "Clean_Trans_No": "Trans_No",
+            "Payment Amount": "Original Amount"
+        }, inplace=True)
+
+        unmatched_payments["Original Amount"] = unmatched_payments["Original Amount"].round()
+
+        unmatched_final = unmatched_payments[[
+            "Date", "Vendor", "Trans_No", "Voucher No", "Description",
+            "Currency", "Debit", "Rate", "Amount",
+            "Payment Date", "Payment Voucher No", "Ending Balance"
+        ]]
+
+        # Add section label
+        df_final = pd.concat([
+            df_final,
+            pd.DataFrame([{"Date": "Unmatched Payments"}]),
+            unmatched_final
+        ], ignore_index=True)
 
     # ✅ Rename columns as requested
     df_final.rename(columns={
