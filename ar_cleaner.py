@@ -236,8 +236,13 @@ def transform_other_payable(df):
     # OP Amount = Debit (since Debit = increase OP)
     merged["Amount"] = merged["Debit"].fillna(0).round()
 
-    # If payment exists, Payment Amount = OP Amount (fully paid assumption)
+    # After merging payments into OPs
     merged["Payment Amount"] = merged["Payment Amount"].fillna(0)
+
+    # ✅ If Payment Voucher No is present but Payment Amount is still 0, use Amount
+    mask_paid_but_zero = (merged["Payment Amount"] == 0) & merged["Payment Voucher No"].notna() & (merged["Payment Voucher No"] != "")
+    merged.loc[mask_paid_but_zero, "Payment Amount"] = merged.loc[mask_paid_but_zero, "Amount"]
+    
     merged["Ending Balance"] = merged["Payment Amount"] - merged["Amount"]
 
     # Generate Voucher No for OP (OP-YY-MM-###)
