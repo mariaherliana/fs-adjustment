@@ -81,8 +81,7 @@ def to_excel(df, engine="xlsxwriter"):
 
             # Auto-adjust column widths
             for i, col in enumerate(df.columns):
-                # Use .str.len() which handles NaNs and PyArrow types correctly
-max_width = max(df[col].astype(str).str.len().max(), len(col)) + 2
+                max_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
                 worksheet.set_column(i, i, max_width)
 
     return output.getvalue()
