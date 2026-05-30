@@ -79,9 +79,15 @@ def to_excel(df, engine="xlsxwriter"):
                     elif row_num == last_row_idx:
                         worksheet.write(row_num, col_num, cell_value, total_format)
 
+            # === FIX APPLIED HERE ===
             # Auto-adjust column widths
             for i, col in enumerate(df.columns):
-                max_width = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                # Use .str.len() which handles PyArrow nulls/NaNs gracefully.
+                # We fillna(0) so that max() works even if the column is empty.
+                max_data_len = df[col].astype(str).str.len().fillna(0).max()
+                
+                # Calculate max width between data and column header
+                max_width = max(max_data_len, len(col)) + 2
                 worksheet.set_column(i, i, max_width)
 
     return output.getvalue()
